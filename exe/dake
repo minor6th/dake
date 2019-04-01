@@ -1,0 +1,170 @@
+#!/usr/bin/env ruby
+require 'gli'
+require 'colorize'
+require 'pathname'
+require 'dake'
+
+DAKE_EXEC_PID = Process.pid
+DAKE_EXEC_TIME = Time.now
+
+include GLI::App
+
+program_desc 'Dake is a data workflow tool inspired by Drake.'
+version Dake::VERSION
+
+subcommand_option_handling :normal
+arguments :strict
+
+accept(Hash) do |value|
+  result = {}
+  value.split(/,/).each do |pair|
+    k,v = pair.split(/:/)
+    result[k] = v
+  end
+  result
+end
+
+def target_opts(target)
+  opts = Dake::TargetOption.new(false, false, :check, :up_tree)
+  mdata = /(?<build_mode>[+-]?)(?<tree_mode>[=^]?)(?<tag>@?)(?<regex>%?)(?<target_name>.+)/.match(target)
+  opts.build_mode = (mdata[:build_mode] == '+' ? :forced : :exclusion) unless mdata[:build_mode].empty?
+  opts.tree_mode = (mdata[:tree_mode] == '=' ? 'target_only' : :down_tree) unless mdata[:tree_mode].empty?
+  opts.tag = true unless mdata[:tag].empty?
+  opts.regex = true unless mdata[:regex].empty?
+  [mdata[:target_name], opts]
+end
+
+switch [:c, :color],
+       desc: 'Enable colorization',
+       default_value: true
+
+flag [:f, :workflow],
+     desc: 'Specify the workflow file',
+     arg_name:'filename',
+     default_value: 'Dakefile'
+
+flag [:var],
+     multiple: true,
+     desc: 'Set workflow variables',
+     arg_name: 'key:val,...',
+     type: Hash
+
+desc 'Run all steps needed to build the specified target'
+arg_name 'Targets'
+command :build do |c|
+  c.flag [:j, :jobs],
+         desc: 'Specifies the maximum number of steps to execute in parallel',
+         arg_name: 'max_num',
+         type: Integer
+
+  c.switch [:n, :'dry-run'],
+           desc: 'Do a dry run without executing actions',
+           default_value: false
+
+  c.switch [:'log'],
+           desc: 'Log the STDOUT and STDERR to separate files',
+           default_value: false
+
+  c.action do |global_options, options, args|
+    String.disable_colorization = true unless global_options[:color]
+    raise 'No targets specified.' if args.empty?
+    if Dir.exist? global_options[:workflow]
+      global_options[:workflow] = File.join(global_options[:workflow], 'Dakefile')
+    end
+    raise "Cannot open workflow file `#{global_options[:workflow]}'." unless File.exist? global_options[:workflow]
+    path = File.absolute_path global_options[:workflow]
+    workflow_file = File.open path
+    env = global_options[:var].reduce({}, :merge!)
+    env.merge! 'BASE' => File.dirname(path)
+    begin
+      target_dict = {}
+      args.each do |arg|
+        target, opts = target_opts(arg)
+        target_dict[target] = opts
+      end
+      tree = DakeParser.new.parse(workflow_file.read)
+      workflow = DakeTransform.new.apply(tree, src_file: workflow_file.to_path)
+      analyzer = DakeAnalyzer.new(workflow, [path], env).analyze
+      resolver = DakeResolver.new(analyzer)
+      dep_graph = resolver.resolve(target_dict)
+      dake_db = DakeDB.new(workflow_file.to_path)
+      DakeExecutor.new(analyzer, dake_db, dep_graph, options[:jobs]).execute(options[:'dry-run'], options[:log])
+    rescue Parslet::ParseFailed => failure
+      puts failure.cause
+      exit(1)
+    end
+  end
+end
+
+desc 'List all targets defined in the workflow'
+command :list do |c|
+  c.switch [:'dep'],
+           desc: 'Show the full dependency tree for each target',
+           default_value: false
+  c.action do |global_options,options,args|
+    String.disable_colorization = false unless global_options[:color]
+    if Dir.exist? global_options[:workflow]
+      global_options[:workflow] = File.join(global_options[:workflow], 'Dakefile')
+    end
+    raise "Cannot open workflow file `#{global_options[:workflow]}'." unless File.exist? global_options[:workflow]
+    path = File.absolute_path global_options[:workflow]
+    workflow_file = File.open path
+    env = global_options[:var].reduce({}, :merge!)
+    env.merge! 'BASE' => File.dirname(path)
+    begin
+      tree = DakeParser.new.parse(workflow_file.read)
+      workflow = DakeTransform.new.apply(tree, src_file: workflow_file.to_path)
+      analyzer = DakeAnalyzer.new(workflow, [path], env).analyze
+      resolver = DakeResolver.new(analyzer)
+
+      tag_list = analyzer.tag_target_dict.keys.map { |tag| [tag, Dake::TargetOption.new(true)] }
+      file_list = analyzer.file_target_dict.keys.map { |file| [file, Dake::TargetOption.new(false)] }
+
+      dep_graph = (options['dep'] ? resolver.resolve((tag_list + file_list).to_h, true) : nil)
+      analyzer.tag_target_dict.each do |tag, steps|
+        steps.each do |step|
+          next if options['dep'] and not dep_graph.root_step.include? step
+          analyzer.print_target(tag, true, step, dep_graph)
+        end
+      end
+      analyzer.file_target_dict.each do |file, step|
+        next if options['dep'] and not dep_graph.root_step.include? step
+        analyzer.print_target(file, false, step, dep_graph)
+      end
+    rescue Parslet::ParseFailed => failure
+      STDERR.puts "Failed parsing #{global_options[:workflow]}."
+      raise failure.message
+    end
+  end
+end
+
+desc 'Start the Dake monitor server'
+arg_name 'Describe arguments to server here'
+command :server do |c|
+  c.action do |global_options, options, args|
+    raise 'Not implemented.'
+  end
+end
+
+pre do |global,command,options,args|
+  # Pre logic here
+  # Return true to proceed; false to abort and not call the
+  # chosen command
+  # Use skips_pre before a command to skip this block
+  # on that command only
+  true
+end
+
+post do |global,command,options,args|
+  # Post logic here
+  # Use skips_post before a command to skip this
+  # block on that command only
+end
+
+on_error do |exception|
+  # Error logic here
+  # return false to skip default error handling
+  true
+end
+
+exit run(ARGV)

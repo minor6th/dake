@@ -29,11 +29,12 @@ class DakeExecutor
 
       queue = Queue.new
       error_queue = Queue.new
+      error_steps = Set.new
 
       error_thr = Thread.new do
         while error = error_queue.deq
           if error.is_a? Exception
-            STDERR.puts "#{error.class}: ".colorize(:red) + "#{error.message}"
+            STDERR.puts "#{error.class}: #{error.message}".colorize(:red)
             STDERR.puts "Continue to execute other Step(s)".colorize(:red)
             STDERR.puts "To Force Quitting: Press Ctrl + C".colorize(:red)
           end
@@ -45,7 +46,17 @@ class DakeExecutor
 
       while next_step = queue.deq
         @pool.post(next_step) do |step|
-          execute_step(step, dry_run, log) if @dep_graph.need_rebuild.include? step
+          lock.acquire_read_lock
+          error_step = error_steps.include? step
+          lock.release_read_lock
+          if error_step
+            line, column = @analyzer.step_line_and_column step
+            msg = "Step(#{step.object_id}) defined in #{step.src_file} at #{line}:#{column} " +
+                  "skipped due to prerequisite step(s) error."
+            error_queue << Exception.new(msg)
+          else
+            execute_step(step, dry_run, log) if @dep_graph.need_rebuild.include? step
+          end
           lock.acquire_write_lock
           dep_map.delete step
           if dep_map.empty?
@@ -53,13 +64,31 @@ class DakeExecutor
           else
             @dep_graph.succ_step[step].each do |succ|
               dep_map[succ].delete step
-              queue << succ if dep_map[succ].empty?
+              if dep_map[succ].empty?
+                queue << succ
+              elsif dep_map[succ].all? { |dep_step| error_steps.include? dep_step }
+                error_steps << succ
+                queue << succ
+              end
             end
           end
           lock.release_write_lock
         rescue Exception => e
           error_queue << e
-          queue << false
+          lock.acquire_write_lock
+          error_steps << step
+          dep_map.delete step
+          if dep_map.empty?
+            queue.close
+          else
+            @dep_graph.succ_step[step].each do |succ|
+              if dep_map[succ].all? { |dep_step| error_steps.include? dep_step }
+                error_steps << succ
+                queue << succ
+              end
+            end
+          end
+          lock.release_write_lock
         end
       end
       @pool.shutdown
@@ -67,7 +96,7 @@ class DakeExecutor
       queue.close
       error_queue.close
       error_thr.join
-      raise "Failed to execute some step(s)" if next_step == false
+      raise "Failed to execute some step(s)" unless error_steps.empty?
     else
       @dep_graph.step_list.each do |step|
         execute_step(step, dry_run, log) if @dep_graph.need_rebuild.include? step

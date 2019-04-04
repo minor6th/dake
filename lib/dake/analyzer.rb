@@ -138,9 +138,9 @@ class DakeAnalyzer
           end
         else
           # Generated file list should not be used in targets
-          if type == :targets
-            raise "File list `#{file_name}' in #{step.src_file} at #{line}:#{column} cannot be used as targets."
-          end
+          # if type == :targets
+          #   raise "File list `#{file_name}' in #{step.src_file} at #{line}:#{column} cannot be used as targets."
+          # end
         end
         newfile = file.dup
         newfile.scheme = scheme

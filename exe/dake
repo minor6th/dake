@@ -28,7 +28,7 @@ def target_opts(target)
   opts = Dake::TargetOption.new(false, false, :check, :up_tree)
   mdata = /(?<build_mode>[+-]?)(?<tree_mode>[=^]?)(?<tag>@?)(?<regex>%?)(?<target_name>.+)/.match(target)
   opts.build_mode = (mdata[:build_mode] == '+' ? :forced : :exclusion) unless mdata[:build_mode].empty?
-  opts.tree_mode = (mdata[:tree_mode] == '=' ? 'target_only' : :down_tree) unless mdata[:tree_mode].empty?
+  opts.tree_mode = (mdata[:tree_mode] == '=' ? :target_only : :down_tree) unless mdata[:tree_mode].empty?
   opts.tag = true unless mdata[:tag].empty?
   opts.regex = true unless mdata[:regex].empty?
   [mdata[:target_name], opts]
@@ -77,18 +77,42 @@ command :build do |c|
     env = global_options[:var].reduce({}, :merge!)
     env.merge! 'BASE' => File.dirname(path)
     begin
-      target_dict = {}
-      args.each do |arg|
-        target, opts = target_opts(arg)
-        target_dict[target] = opts
-      end
       tree = DakeParser.new.parse(workflow_file.read)
       workflow = DakeTransform.new.apply(tree, src_file: workflow_file.to_path)
       analyzer = DakeAnalyzer.new(workflow, [path], env).analyze
+      target_pairs = []
+      args.each do |arg|
+        target, opts = target_opts(arg)
+        if target == '...'
+          tag_list = analyzer.tag_target_dict.keys.map { |tag| [tag, Dake::TargetOption.new(true, false, :check, :up_tree)] }
+          file_list = analyzer.file_target_dict.keys.map { |file| [file, Dake::TargetOption.new(false, false, :check, :up_tree)] }
+          target_pairs += (tag_list + file_list)
+        else
+          if opts.regex
+            matched_targets =
+                if opts.tag
+                  analyzer.tag_target_dict.keys.find_all { |tag_name| tag_name.match target }
+                else
+                  analyzer.file_target_dict.keys.find_all { |file_name| file_name.match target }
+                end
+            matched_targets.each { |matched_target| target_pairs << [matched_target, opts] }
+          else
+            target_pairs << [target, opts]
+          end
+        end
+      end
+      if target_pairs.any? { |_, opts| opts.tree_mode == :down_tree }
+        tag_list = analyzer.tag_target_dict.keys.map { |tag| [tag, Dake::TargetOption.new(true, false, :check, :up_tree)] }
+        file_list = analyzer.file_target_dict.keys.map { |file| [file, Dake::TargetOption.new(false, false, :check, :up_tree)] }
+        resolve_pairs = (tag_list + file_list)
+      else
+        resolve_pairs = target_pairs
+      end
       resolver = DakeResolver.new(analyzer)
-      dep_graph = resolver.resolve(target_dict)
+      dep_graph = resolver.resolve(resolve_pairs)
+      rebuild_set = resolver.target_rebuild_set(target_pairs, dep_graph)
       dake_db = DakeDB.new(workflow_file.to_path)
-      DakeExecutor.new(analyzer, dake_db, dep_graph, options[:jobs]).execute(options[:'dry-run'], options[:log])
+      DakeExecutor.new(analyzer, dake_db, dep_graph, options[:jobs]).execute(rebuild_set, options[:'dry-run'], options[:log])
     rescue Parslet::ParseFailed => failure
       puts failure.cause
       exit(1)
@@ -116,11 +140,13 @@ command :list do |c|
       workflow = DakeTransform.new.apply(tree, src_file: workflow_file.to_path)
       analyzer = DakeAnalyzer.new(workflow, [path], env).analyze
       resolver = DakeResolver.new(analyzer)
-
-      tag_list = analyzer.tag_target_dict.keys.map { |tag| [tag, Dake::TargetOption.new(true)] }
-      file_list = analyzer.file_target_dict.keys.map { |file| [file, Dake::TargetOption.new(false)] }
-
-      dep_graph = (options['dep'] ? resolver.resolve((tag_list + file_list).to_h, true) : nil)
+      dep_graph = nil
+      if options['dep']
+        tag_list = analyzer.tag_target_dict.keys.map { |tag| [tag, Dake::TargetOption.new(true, false, :check, :up_tree)] }
+        file_list = analyzer.file_target_dict.keys.map { |file| [file, Dake::TargetOption.new(false, false, :check, :up_tree)] }
+        target_pairs = (tag_list + file_list)
+        dep_graph = resolver.resolve(target_pairs)
+      end
       analyzer.tag_target_dict.each do |tag, steps|
         steps.each do |step|
           next if options['dep'] and not dep_graph.root_step.include? step

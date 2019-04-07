@@ -34,11 +34,12 @@ module DakeScheme
   class Local < Scheme
     PATTERN = ['local:']
     def initialize(scheme_part, path_part, step)
-      @src = path_part
       if path_part.start_with? '/'
        @path = path_part
+       @src = Pathname.new(path_part).relative_path_from(step.context['BASE'])
       else
         @path = File.expand_path(path_part, step.context['BASE'])
+        @src = path_part
       end
       @step = step
     end

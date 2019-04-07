@@ -12,6 +12,7 @@ Gem::Specification.new do |spec|
   spec.summary       = %q{Dake is a data workflow tool inspired by Drake.}
   spec.description   = %q{Dake is a data workflow tool inspired by Drake.}
   spec.homepage      = "https://github.com/minor6th/dake"
+  spec.license       = "MIT"
 
   # Prevent pushing this gem to RubyGems.org. To allow pushes either set the 'allowed_push_host'
   # to allow pushing to a single host or delete this section to allow pushing to any host.

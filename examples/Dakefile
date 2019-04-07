@@ -1,0 +1,40 @@
+# This is an example
+
+imdb/dataset_urls <- [ruby]
+    require 'net/http'
+    html = Net::HTTP.get(URI('https://datasets.imdbws.com/index.html'))
+    urls = html.each_line.grep(/href=.+tsv.gz/) { |line| line.sub(/.*<a href=(https:\/\/.+tsv.gz)>.*\n/, '\1') }
+    FileUtils.mkdir('imdb') unless Dir.exist? 'imdb'
+    file = File.open('$[OUTPUT]', 'w')
+    file.write(urls.join("\n"))
+    file.close
+
+^"imdb/.+\.tsv.gz" <- imdb/dataset_urls
+    FILE=`basename $[OUTPUT]`
+    URL=`grep $FILE $[INPUT]`
+    wget -O $[OUTPUT] $URL
+    touch $[OUTPUT]
+
+^"imdb/(?<file>.+\.tsv)" <- imdb/$[file].gz
+    gunzip -k $[INPUT]
+    touch $[OUTPUT]
+
+imdb/title_type_rating_dist.pdf <- imdb/title.ratings.tsv, imdb/title.basics.tsv [r]
+    require(tidyverse)
+    title_ratings <- read_tsv("$[INPUT0]")
+    title_basics <- read_tsv("$[INPUT1]")
+    pd <- title_basics %>% left_join(title_ratings, by='tconst') %>%
+                           group_by(titleType) %>%
+                           summarise(averageRating = mean(averageRating, na.rm = T))
+    pdf("$[OUTPUT]", width = 5, height = 4)
+    ggplot(pd, aes(x = reorder(titleType, averageRating), y = averageRating)) +
+        geom_col() +
+        coord_flip() +
+        xlab("titleType")
+
+imdb/rating_dist.pdf <- imdb/title.ratings.tsv [r]
+    require(tidyverse)
+    title_ratings <- read_tsv("$[INPUT0]")
+    pdf("$[OUTPUT]", width = 5, height = 4)
+    ggplot(title_ratings, aes(x = averageRating)) + geom_histogram()
+

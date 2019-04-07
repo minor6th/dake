@@ -1,18 +1,6 @@
 require 'set'
 require 'open3'
 
-# the data struct needed by the executor
-# note that this is not nessesarily the complete graph,
-# the graph is only used to produce the given targets
-DepGraph = Struct.new(
-  :succ_step,    # a dict maps each step in the DepGraph to the steps depend on it
-  :dep_step,     # a dict maps each step in the DepGraph to the steps it depends on
-  :step_list,    # a list of steps represents one sequential execution order
-  :root_step,    # a set of steps that hos no dependant
-  :leaf_step,    # a set of steps that has no prerequisite
-  :need_rebuild  # a set of steps in step_list which should be executed to update their targets
-)
-
 class DakeAnalyzer
   attr_reader :workflow, :variable_dict, :method_dict, :included_files
   attr_reader :tag_target_dict, :file_target_dict

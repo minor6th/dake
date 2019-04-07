@@ -15,16 +15,17 @@ class DakeExecutor
     ) if @async
   end
 
-  def execute(dry_run=false, log=false)
-    if @dep_graph.need_rebuild.empty?
+  def execute(rebuild_set, dry_run=false, log=false)
+    if rebuild_set.empty?
       STDERR.puts "Nothing to be done.".colorize(:green)
       return
     end
     if @async
       dep_map = Hash.new
-      @dep_graph.dep_step.each do |step, dep_set|
+      rebuild_set.each do |step|
+        dep_set = @dep_graph.dep_step[step]
         next if dep_set.empty?
-        dep_map[step] = dep_set.dup
+        dep_map[step] = dep_set & rebuild_set
       end
 
       queue = Queue.new
@@ -42,7 +43,7 @@ class DakeExecutor
       end
 
       lock = Concurrent::ReadWriteLock.new
-      @dep_graph.leaf_step.each { |step| queue << step }
+      @dep_graph.leaf_step.each { |step| queue << step if rebuild_set.include? step }
 
       while next_step = queue.deq
         @pool.post(next_step) do |step|
@@ -55,7 +56,7 @@ class DakeExecutor
                   "skipped due to prerequisite step(s) error."
             error_queue << Exception.new(msg)
           else
-            execute_step(step, dry_run, log) if @dep_graph.need_rebuild.include? step
+            execute_step(step, dry_run, log)
           end
           lock.acquire_write_lock
           dep_map.delete step
@@ -63,6 +64,7 @@ class DakeExecutor
             queue.close
           else
             @dep_graph.succ_step[step].each do |succ|
+              next unless dep_map[succ]
               dep_map[succ].delete step
               if dep_map[succ].empty?
                 queue << succ
@@ -99,7 +101,7 @@ class DakeExecutor
       raise "Failed to execute some step(s)" unless error_steps.empty?
     else
       @dep_graph.step_list.each do |step|
-        execute_step(step, dry_run, log) if @dep_graph.need_rebuild.include? step
+        execute_step(step, dry_run, log) if rebuild_set.include? step
       end
     end
   end

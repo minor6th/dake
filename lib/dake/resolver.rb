@@ -1,6 +1,113 @@
+# the data struct needed by the executor
+# note that this is not nessesarily the complete graph,
+# the graph is only used to produce the given targets
+DepGraph = Struct.new(
+    :succ_step,    # a dict maps each step in the DepGraph to the steps depend on it
+    :dep_step,     # a dict maps each step in the DepGraph to the steps it depends on
+    :step_list,    # a list of steps represents one sequential execution order
+    :root_step,    # a set of steps that hos no dependant
+    :leaf_step,    # a set of steps that has no prerequisite
+    :step_target   # a dict maps each step in the DepGraph to its output files used while resolving targets
+)
+
 class DakeResolver
   def initialize(analyzer)
     @analyzer = analyzer
+  end
+
+  def target_rebuild_set(target_pairs, dep_graph)
+    rebuild_set = Set.new
+    target_pairs.each do |target_name, target_opts|
+      if target_opts.tag
+        dummy_step = Step.new([], [], [], {}, nil, nil, @analyzer.variable_dict, nil, nil)
+        scheme = DakeScheme::Tag.new('@', target_name, dummy_step)
+      else
+        scheme = @analyzer.analyze_scheme(target_name, nil, nil, nil)
+      end
+      target_steps = find_steps(scheme, target_opts.tag).to_set
+      if target_steps.empty? and not scheme.exist?
+        raise "No step found for building file `#{target_name}'."
+      end
+
+      visited = Set.new
+      path_visited = Set.new
+      down_tree_steps = Set.new
+      up_tree_steps = Set.new
+      need_rebuild = Set.new
+      up_tree = 0
+      dep_step_list = {}
+
+      init_steps = (target_opts.tree_mode == :down_tree ? dep_graph.root_step : target_steps)
+      init_steps.each do |init_step|
+        stack = [init_step]
+
+        until stack.empty?
+          step = stack.last
+          visited << step
+          path_visited << step
+          up_tree_steps << step if up_tree > 0 or target_steps.include? step
+
+          dep_step_list[step] ||= dep_graph.dep_step[step].to_a
+          while next_step = dep_step_list[step].pop
+            break unless visited.include? next_step
+          end
+          if next_step
+            stack.push next_step
+            up_tree += 1 if target_steps.include? step
+          else
+            stack.pop
+
+            if dep_graph.leaf_step.include? step
+              step.prerequisites.each do |prereq|
+                if prereq.flag != '?' and not prereq.scheme.exist?
+                  raise "No step found for building file `#{prereq.scheme.path}'."
+                end
+              end
+            end
+
+            if target_steps.include? step or dep_graph.dep_step[step].any? { |s| down_tree_steps.include? s }
+              down_tree_steps << step
+            end
+
+            if target_opts.build_mode == :check and (up_tree_steps.include? step or down_tree_steps.include? step)
+              if dep_graph.leaf_step.include? step
+                need_rebuild << step if need_execute?(dep_graph.step_target[step], step)
+              else
+                if dep_graph.dep_step[step].any? { |dep_step| need_rebuild.include? dep_step }
+                  need_rebuild << step
+                else
+                  need_rebuild << step if need_execute?(dep_graph.step_target[step], step)
+                end
+              end
+            end
+
+            up_tree -= 1 if target_steps.include? step
+            path_visited.delete step
+          end
+        end
+      end
+      case target_opts.build_mode
+      when :forced
+        case target_opts.tree_mode
+        when :up_tree then rebuild_set |= up_tree_steps
+        when :down_tree then rebuild_set |= down_tree_steps
+        when :target_only then rebuild_set |= target_steps
+        end
+      when :exclusion
+        case target_opts.tree_mode
+        when :up_tree then rebuild_set -= up_tree_steps
+        when :down_tree then rebuild_set -= down_tree_steps
+        when :target_only then rebuild_set -= target_steps
+        end
+      when :check
+        case target_opts.tree_mode
+        when :up_tree then rebuild_set |= (up_tree_steps & need_rebuild)
+        when :down_tree then rebuild_set |= (down_tree_steps & need_rebuild)
+        when :target_only then rebuild_set |= (target_steps & need_rebuild)
+        end
+      end
+    end
+    rebuild_set
   end
 
   # check if a step needs to be executed to produce the given targets
@@ -43,7 +150,7 @@ class DakeResolver
     false
   end
 
-  def find_steps(target_scheme, tag, optional=false)
+  def find_steps(target_scheme, tag)
     target_name = target_scheme.path
     target_src = target_scheme.src
     if tag
@@ -58,8 +165,8 @@ class DakeResolver
           steps = []
           template_steps.each do |template_step|
             if @analyzer.step_template_dict[template_step] and
-               @analyzer.step_template_dict[template_step][mdata.named_captures]
-              step = @analyzer.step_template_dict[template_step][mdata.named_captures]
+               @analyzer.step_template_dict[template_step][mdata]
+              step = @analyzer.step_template_dict[template_step][mdata]
             else
               step = template_step.dup
               step.targets = template_step.targets.dup
@@ -67,7 +174,7 @@ class DakeResolver
               step.context = template_step.context.dup
               step.context.merge! mdata.named_captures
               @analyzer.step_template_dict[template_step] ||= {}
-              @analyzer.step_template_dict[template_step][mdata.named_captures] = step
+              @analyzer.step_template_dict[template_step][mdata] = step
             end
             step.targets.map! do |file|
               if file.scheme.is_a? DakeScheme::Regex and file.scheme.path.match target_name
@@ -96,8 +203,8 @@ class DakeResolver
         end
         if template_step
           if @analyzer.step_template_dict[template_step] and
-             @analyzer.step_template_dict[template_step][mdata.named_captures]
-            step = @step_template_dict[template_step][mdata.named_captures]
+             @analyzer.step_template_dict[template_step][mdata]
+            step = @analyzer.step_template_dict[template_step][mdata]
           else
             step = template_step.dup
             step.targets = template_step.targets.dup
@@ -105,7 +212,7 @@ class DakeResolver
             step.context = template_step.context.dup
             step.context.merge! mdata.named_captures
             @analyzer.step_template_dict[template_step] ||= {}
-            @analyzer.step_template_dict[template_step][mdata.named_captures] = step
+            @analyzer.step_template_dict[template_step][mdata] = step
           end
           step.targets.map! do |file|
             if file.scheme.is_a? DakeScheme::Regex and file.scheme.path.match target_src
@@ -120,12 +227,7 @@ class DakeResolver
           @analyzer.file_target_dict[target_name] = step
           steps = [step]
         else
-          scheme = @analyzer.analyze_scheme(target_name, nil, nil, nil)
-          if optional or scheme.exist?
-            steps = []
-          else
-            raise "No step found for building file `#{target_name}'."
-          end
+          steps = []
         end
       end
     end
@@ -133,26 +235,25 @@ class DakeResolver
   end
 
   # resolve the dependency graph and generate step list for sequential execution
-  def resolve(target_dict, no_check=false)
+  def resolve(target_pairs)
     step_list = []
     visited = Set.new
     path_visited = Set.new
     leaf_steps = Set.new
     target_steps = Set.new
-    need_rebuild = Set.new
     succ_step_dict = {}
     dep_step_dict = {}
     dep_step_list = {}
     succ_target_dict = {}
 
-    target_dict.each do |target_name, target_opts|
+    target_pairs.each do |target_name, target_opts|
       if target_opts.tag
         dummy_step = Step.new([], [], [], {}, nil, nil, @analyzer.variable_dict, nil, nil)
         scheme = DakeScheme::Tag.new('@', target_name, dummy_step)
       else
         scheme = @analyzer.analyze_scheme(target_name, nil, nil, nil)
       end
-      dep_steps = find_steps(scheme, target_opts.tag, no_check)
+      dep_steps = find_steps(scheme, target_opts.tag)
       dep_steps.each do |dep_step|
         target = dep_step.targets.find { |target| target.scheme.path == scheme.path }
         succ_target_dict[dep_step] ||= Set.new
@@ -173,7 +274,7 @@ class DakeResolver
           dep_step_dict[step] = Set.new
           step.prerequisites.map! { |file| @analyzer.analyze_file(file, :prerequisites, step) }.flatten!
           step.prerequisites.each do |dep|
-            dep_steps = find_steps(dep.scheme, dep.tag, (dep.flag == '?' or no_check))
+            dep_steps = find_steps(dep.scheme, dep.tag)
             dep_steps.each do |dep_step|
               dep_step_dict[step] << dep_step
               succ_step_dict[dep_step] ||= Set.new
@@ -205,18 +306,7 @@ class DakeResolver
         end
       end
     end
-    step_list.each do |step|
-      if leaf_steps.include? step
-        need_rebuild << step if no_check or need_execute?(succ_target_dict[step], step)
-      else
-        if dep_step_dict[step].any? { |dep_step| need_rebuild.include? dep_step }
-          need_rebuild << step
-        else
-          need_rebuild << step if no_check or need_execute?(succ_target_dict[step], step)
-        end
-      end
-    end
     root_steps = target_steps.select { |step| succ_step_dict[step].empty? }.to_set
-    DepGraph.new(succ_step_dict, dep_step_dict, step_list, root_steps, leaf_steps, need_rebuild)
+    DepGraph.new(succ_step_dict, dep_step_dict, step_list, root_steps, leaf_steps, succ_target_dict)
   end
 end

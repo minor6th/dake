@@ -47,50 +47,52 @@ class DakeExecutor
 
       while next_step = queue.deq
         @pool.post(next_step) do |step|
-          lock.acquire_read_lock
-          error_step = error_steps.include? step
-          lock.release_read_lock
-          if error_step
-            line, column = @analyzer.step_line_and_column step
-            msg = "Step(#{step.object_id}) defined in #{step.src_file} at #{line}:#{column} " +
-                  "skipped due to prerequisite step(s) error."
-            error_queue << Exception.new(msg)
-          else
-            execute_step(step, dry_run, log)
-          end
-          lock.acquire_write_lock
-          dep_map.delete step
-          if dep_map.empty?
-            queue.close
-          else
-            @dep_graph.succ_step[step].each do |succ|
-              next unless dep_map[succ]
-              dep_map[succ].delete step
-              if dep_map[succ].empty?
-                queue << succ
-              elsif dep_map[succ].all? { |dep_step| error_steps.include? dep_step }
-                error_steps << succ
-                queue << succ
+          begin
+            lock.acquire_read_lock
+            error_step = error_steps.include? step
+            lock.release_read_lock
+            if error_step
+              line, column = @analyzer.step_line_and_column step
+              msg = "Step(#{step.object_id}) defined in #{step.src_file} at #{line}:#{column} " +
+                    "skipped due to prerequisite step(s) error."
+              error_queue << Exception.new(msg)
+            else
+              execute_step(step, dry_run, log)
+            end
+            lock.acquire_write_lock
+            dep_map.delete step
+            if dep_map.empty?
+              queue.close
+            else
+              @dep_graph.succ_step[step].each do |succ|
+                next unless dep_map[succ]
+                dep_map[succ].delete step
+                if dep_map[succ].empty?
+                  queue << succ
+                elsif dep_map[succ].all? { |dep_step| error_steps.include? dep_step }
+                  error_steps << succ
+                  queue << succ
+                end
               end
             end
-          end
-          lock.release_write_lock
-        rescue Exception => e
-          error_queue << e
-          lock.acquire_write_lock
-          error_steps << step
-          dep_map.delete step
-          if dep_map.empty?
-            queue.close
-          else
-            @dep_graph.succ_step[step].each do |succ|
-              if dep_map[succ].all? { |dep_step| error_steps.include? dep_step }
-                error_steps << succ
-                queue << succ
+            lock.release_write_lock
+          rescue Exception => e
+            error_queue << e
+            lock.acquire_write_lock
+            error_steps << step
+            dep_map.delete step
+            if dep_map.empty?
+              queue.close
+            else
+              @dep_graph.succ_step[step].each do |succ|
+                if dep_map[succ].all? { |dep_step| error_steps.include? dep_step }
+                  error_steps << succ
+                  queue << succ
+                end
               end
             end
+            lock.release_write_lock
           end
-          lock.release_write_lock
         end
       end
       @pool.shutdown

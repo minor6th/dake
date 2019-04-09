@@ -1,4 +1,4 @@
-require 'git'
+# require 'git'
 # require "sqlite3"
 
 class DakeDB

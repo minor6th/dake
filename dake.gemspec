@@ -43,10 +43,10 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "awesome_print"
 
   spec.add_runtime_dependency "gli"
-  spec.add_runtime_dependency "git"
+  #spec.add_runtime_dependency "git"
   #spec.add_runtime_dependency "sqlite3"
   spec.add_runtime_dependency "colorize"
-  spec.add_runtime_dependency "sinatra"
+  #spec.add_runtime_dependency "sinatra"
   spec.add_runtime_dependency "parslet"
   spec.add_runtime_dependency "concurrent-ruby"
 end

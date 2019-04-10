@@ -43,7 +43,7 @@ class DakeExecutor
       end
 
       lock = Concurrent::ReadWriteLock.new
-      @dep_graph.leaf_step.each { |step| queue << step if rebuild_set.include? step }
+      rebuild_set.each { |step| queue << step if @dep_graph.dep_step[step].all? { |dep| not rebuild_set.include? dep} }
 
       while next_step = queue.deq
         @pool.post(next_step) do |step|

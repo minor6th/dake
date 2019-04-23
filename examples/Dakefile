@@ -19,7 +19,7 @@ imdb/dataset_urls <- [ruby]
     gunzip -k $[INPUT]
     touch $[OUTPUT]
 
-imdb/title_type_rating_dist.pdf <- imdb/title.ratings.tsv, imdb/title.basics.tsv [r]
+imdb/title_type_rating_dist.pdf <- imdb/title.ratings.tsv, imdb/title.basics.tsv [R]
     require(tidyverse)
     title_ratings <- read_tsv("$[INPUT0]")
     title_basics <- read_tsv("$[INPUT1]")
@@ -32,7 +32,7 @@ imdb/title_type_rating_dist.pdf <- imdb/title.ratings.tsv, imdb/title.basics.tsv
         coord_flip() +
         xlab("titleType")
 
-imdb/rating_dist.pdf <- imdb/title.ratings.tsv [r]
+imdb/rating_dist.pdf <- imdb/title.ratings.tsv [R]
     require(tidyverse)
     title_ratings <- read_tsv("$[INPUT0]")
     pdf("$[OUTPUT]", width = 5, height = 4)

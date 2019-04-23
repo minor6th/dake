@@ -135,7 +135,7 @@ module DakeProtocol
       'shell'  => Shell,
       'python' => Python,
       'ruby'   => Ruby,
-      'r'      => Rscript,
+      'R'      => Rscript,
       'awk'    => AWK
   }
 end

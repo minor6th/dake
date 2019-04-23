@@ -151,7 +151,7 @@ class DakeExecutor
       context["OUTPUTN"] += 1
     end
     context['OUTPUTN'] = context['OUTPUTN'].to_s
-    context['OUTPUTS'] = context['OUTPUTS'].join(" ")
+    context['OUTPUTS'] = context['OUTPUTS'].join("\n")
     step.prerequisites.reject { |s| s.tag }.each_with_index do |input, n|
       name = input.scheme.path
       context["INPUT"] = name if n == 0
@@ -160,7 +160,7 @@ class DakeExecutor
       context["INPUTN"] += 1
     end
     context['INPUTN'] = context['INPUTN'].to_s
-    context['INPUTS'] = context['INPUTS'].join(" ")
+    context['INPUTS'] = context['INPUTS'].join("\n")
     @analyzer.analyze_option(step)
     step.cmd_text = prepare_command(step)
   end

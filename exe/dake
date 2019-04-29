@@ -114,8 +114,8 @@ command :build do |c|
       dake_db = DakeDB.new(workflow_file.to_path)
       DakeExecutor.new(analyzer, dake_db, dep_graph, options[:jobs]).execute(rebuild_set, options[:'dry-run'], options[:log])
     rescue Parslet::ParseFailed => failure
-      puts failure.cause
-      exit(1)
+      STDERR.puts "Failed parsing #{global_options[:workflow]}."
+      raise failure.message
     end
   end
 end
